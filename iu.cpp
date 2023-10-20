@@ -19,6 +19,10 @@ iu_t::iu_t(int __node) {
   for (int i = 0; i < MEM_SIZE; ++i) 
     for (int j = 0; j < CACHE_LINE_SIZE; ++j)
       mem[i][j] = 0;
+
+  proc_cmd_p = false;
+  proc_cmd_writeback_p = false;
+  
 }
 
 void iu_t::bind(cache_t *c, network_t *n) {
@@ -26,11 +30,9 @@ void iu_t::bind(cache_t *c, network_t *n) {
   net = n;
 }
 
-
 void iu_t::advance_one_cycle() {
-  // fixed priority: reply from network
   if (net->from_net_p(node, PRI0)) { 
-      process_net_reply(net->from_net(node, PRI0));
+    process_net_reply(net->from_net(node, PRI0));
 
   } else if (net->from_net_p(node, PRI1)) {
     process_net_request(net->from_net(node, PRI1));
@@ -41,22 +43,37 @@ void iu_t::advance_one_cycle() {
   } else if (net->from_net_p(node, PRI3)) {
     process_net_request(net->from_net(node, PRI3));
 
-  } else if (proc_cmd_p && !proc_cmd_processed_p) {
-    proc_cmd_processed_p = true;
-    process_proc_request(proc_cmd);
+  } else if (proc_cmd_writeback_p) {
+    if (!process_proc_request(proc_cmd_writeback)) {
+      proc_cmd_writeback_p = false;
+    }
+  } else if (proc_cmd_p) {
+    if (!process_proc_request(proc_cmd)) {
+      proc_cmd_p = false;
+    }
   }
 }
 
 // processor side
 
-// this interface method only takes and buffers a request from the
-// processor.
+// this interface method buffers a non-writeback request from the processor, returns true if cannot complete
 bool iu_t::from_proc(proc_cmd_t pc) {
   if (!proc_cmd_p) {
     proc_cmd_p = true;
     proc_cmd = pc;
 
-    proc_cmd_processed_p = false;
+    return(false);
+  } else {
+    return(true);
+  }
+}
+
+// this interface method buffers a writeback request from the processor, returns true if cannot complete
+bool iu_t::from_proc_writeback(proc_cmd_t pc) {
+  if (!proc_cmd_writeback_p) {
+    proc_cmd_writeback_p = true;
+    proc_cmd_writeback = pc;
+
     return(false);
   } else {
     return(true);
@@ -81,7 +98,7 @@ bool iu_t::process_proc_request(proc_cmd_t pc) {
       cache->reply(pc);
       return(false);
       
-    case WRITE:
+    case WRITEBACK:
       copy_cache_line(mem[lcl], pc.data);
       return(false);
       
@@ -128,7 +145,7 @@ bool iu_t::process_net_request(net_cmd_t net_cmd) {
 
     return(net->to_net(node, PRI0, net_cmd));
       
-  case WRITE:
+  case WRITEBACK:
     copy_cache_line(mem[lcl], pc.data);
     return(false);
       
@@ -151,7 +168,7 @@ bool iu_t::process_net_reply(net_cmd_t net_cmd) {
     cache->reply(pc);
     return(false);
       
-  case WRITE:
+  case WRITEBACK:
   case INVALIDATE:
     ERROR("should not have gotten a reply back from a write or an invalidate, since we are incoherent");
     return(false);  // need to return something for now

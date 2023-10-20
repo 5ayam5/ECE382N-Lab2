@@ -91,7 +91,7 @@ private:
 
   // iu side
   void reply(proc_cmd_t proc_cmd);
-  response_t snoop(net_cmd_t net_cmd);
+  response_t snoop(proc_cmd_t proc_cmd);
 
 };
 #endif

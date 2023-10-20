@@ -13,6 +13,7 @@ const int ADDR_SIZE = 32;          // 32b address space
 const int CACHE_LINE_SIZE = 8;     // number of words in cacheline,  needs to be consistent with LG_CACHE_LINE_SIZE
 const int LG_CACHE_LINE_SIZE = 3;  // needs to be consistent with CACHE_LINE_SIZE
 const int MEM_SIZE = 1024;
+const int DIR_MEM_SIZE = 256;
 const int NUM_PRIORITIES = 4;
 
 const int NETWORK_LATENCY = 10;
@@ -22,7 +23,7 @@ typedef unsigned int uint;
 typedef uint address_t;      // cannot be addr_t because cygwin defines
 typedef uint address_tag_t;
 typedef enum {INVALID, SHARED, EXCLUSIVE, MODIFIED} permit_tag_t;
-typedef enum {READ, WRITE, INVALIDATE} busop_t;
+typedef enum {READ, WRITEBACK, INVALIDATE, NO_BUSOP} busop_t;
 typedef enum {PRI0, PRI1, PRI2, PRI3} pri_t;
 typedef int replacement_t;
 typedef int bus_tag_t;

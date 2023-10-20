@@ -62,6 +62,3 @@ net_cmd_t network_t::from_net(int dest_port, pri_t pri) {
 }
 			   
 
-void network_t::advance_one_cycle() {
-  
-}

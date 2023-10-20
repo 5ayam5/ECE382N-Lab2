@@ -38,13 +38,13 @@ void advance_time() {
   for (int i = 0; i < args.num_procs; ++i) {
     p = (p + 1) % args.num_procs;
 
-    network->advance_one_cycle();
     ius[p]->advance_one_cycle();
     procs[p]->advance_one_cycle();
 
   }
   ++cur_cycle;
 }
+
 
 void parse_args(int argc, char *argv[]) {
   if (argc != 5) {
@@ -79,7 +79,7 @@ void init_system() {
   init_test();
 }
 
-int main(int argc, char *argv[]) {
+main(int argc, char *argv[]) {
   int cycle;
 
   parse_args(argc, argv);

@@ -12,6 +12,7 @@
 #include "types.h"
 #include "cache.h"
 #include "iu.h"
+#include "helpers.h"
 
 
 cache_t::cache_t(int __node, int __lg_assoc, int __lg_num_sets, int __lg_cache_line_size) {
@@ -231,7 +232,10 @@ response_t cache_t::load(address_t addr, bus_tag_t tag, int *data, bool retried_
       // issue a read to next level of memory hierarchy.  In this case,
       // it's the IU
       
-      bool iu_retry_p = iu->from_proc(proc_cmd);
+      if (iu->from_proc(proc_cmd)) {
+	      ERROR("should not retry from_proc:load");
+      }
+
 
       // create a response.  We know that it will take at least one
       // cycle to get a response and we are modeling a blocking cache
@@ -257,7 +261,9 @@ response_t cache_t::store(address_t addr, bus_tag_t tag, int data, bool retried_
   case INVALID: {
     if (!retried_p) {
       proc_cmd_t proc_cmd = (proc_cmd_t){READ, addr, tag, MODIFIED};
-      iu->from_proc(proc_cmd);
+      if (iu->from_proc(proc_cmd)) {
+	ERROR("should not retry from_proc:store INVALID");
+      }
 
       ++misses;
     }
@@ -270,7 +276,9 @@ response_t cache_t::store(address_t addr, bus_tag_t tag, int data, bool retried_
   case SHARED: {
     if (!retried_p) {
       proc_cmd_t proc_cmd = (proc_cmd_t){READ, addr, tag, MODIFIED};
-      iu->from_proc(proc_cmd);
+      if (iu->from_proc(proc_cmd)) {
+	ERROR("should not retry from_proc:store SHARED");
+      }
 
       ++partial_hits;
     }
@@ -305,16 +313,3 @@ response_t cache_t::store(address_t addr, bus_tag_t tag, int data, bool retried_
 
   return(r);
 }
-
-void cache_t::reply(proc_cmd_t proc_cmd) {
-  // fill cache, return to processor
-
-  cache_access_response_t car = lru_replacement(proc_cmd.addr);
-
-  NOTE_ARGS(("%d: replacing addr_tag %d into set %d, assoc %d", node, car.address_tag, car.set, car.way));
-  
-  car.permit_tag = proc_cmd.permit_tag;
-  cache_fill(car, proc_cmd.data);
-  
-}
-

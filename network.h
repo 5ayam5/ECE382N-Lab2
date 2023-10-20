@@ -28,7 +28,6 @@ class network_t {  // output queued
   network_t(int num_ports);
   
   void bind(int p, iu_t *i);
-  void advance_one_cycle();
   
   friend class iu_t;
 };

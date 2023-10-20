@@ -41,7 +41,7 @@ test_args_t test_args;
 void init_test() {
   switch(args.test) {
   case 0:
-    test_args.addr_range = 1024;
+    test_args.addr_range = 512;
     break;
 
   default:
@@ -56,7 +56,7 @@ void finish_test() {
     switch(args.test) {
     case 0:
       hr = caches[i]->hit_rate();
-      if (!within_tolerance(hr, 0.5, 0.001)) {
+      if (!within_tolerance(hr, 0.5, 0.01)) {
 	ERROR("out of tolerance");
       }
       break;

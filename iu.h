@@ -20,6 +20,7 @@ class iu_t {
   int global_accesses;
 
   data_t mem[MEM_SIZE];
+  data_t dir_mem[DIR_MEM_SIZE];
 
   cache_t *cache;
   network_t *net;
@@ -27,7 +28,8 @@ class iu_t {
   bool proc_cmd_p;
   proc_cmd_t proc_cmd;
 
-  bool proc_cmd_processed_p;
+  bool proc_cmd_writeback_p;
+  proc_cmd_t proc_cmd_writeback;
 
   // processor side
   bool process_proc_request(proc_cmd_t proc_cmd);
@@ -46,6 +48,7 @@ class iu_t {
 
   // processor side
   bool from_proc(proc_cmd_t pc);
+  bool from_proc_writeback(proc_cmd_t pc);
   
   // network side
   bool from_net(net_cmd_t nc);
