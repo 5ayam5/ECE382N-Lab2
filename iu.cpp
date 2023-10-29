@@ -19,10 +19,25 @@ iu_t::iu_t(int __node) {
   for (int i = 0; i < MEM_SIZE; ++i) 
     for (int j = 0; j < CACHE_LINE_SIZE; ++j)
       mem[i][j] = 0;
+  for (int i = 0; i < MEM_SIZE / CACHE_LINE_SIZE; ++i) {
+    directory_entry_t &entry = ((directory_entry_t *)dir_mem)[i];
+    entry.modified_p = false;
+    for (int j = 0; j < MAX_NUM_PROCS; j++)
+      entry.node_mask[j] = 0;
+    std::flush(std::cout);
+  }
+
+  cmd_id = 0;
+  dir_reply_cmd.valid_p = false;
+  cache_request_cmd.valid_p = false;
+  cache_reply_cmd.valid_p = false;
+  dir_request_cmd.valid_p = false;
+  for (int i = 0; i < MAX_NUM_PROCS; i++) {
+    on_net_p[i] = false;
+  }
 
   proc_cmd_p = false;
   proc_cmd_writeback_p = false;
-  
 }
 
 void iu_t::bind(cache_t *c, network_t *n) {
@@ -30,21 +45,18 @@ void iu_t::bind(cache_t *c, network_t *n) {
   net = n;
 }
 
+// if there is a proc_cmd, iu sends a dir_request to home node and receives a dir_reply in response
+// if there is a proc_cmd_writeback, iu sends sends the data in the form of a cache_reply
+// home node sends coherence information via a cache_request and iu replies with either data or ack via a cache_reply
 void iu_t::advance_one_cycle() {
-  if (net->from_net_p(node, PRI0)) { 
-    process_net_reply(net->from_net(node, PRI0));
-
-  } else if (net->from_net_p(node, PRI1)) {
-    process_net_request(net->from_net(node, PRI1));
-
-  } else if (net->from_net_p(node, PRI2)) {
-    process_net_request(net->from_net(node, PRI2));
-
-  } else if (net->from_net_p(node, PRI3)) {
-    process_net_request(net->from_net(node, PRI3));
-
-  } else if (proc_cmd_writeback_p) {
-    if (!process_proc_request(proc_cmd_writeback)) {
+  NOTE_ARGS(("node = %d: bits = %d %d %d %d %d %d", node, proc_cmd_writeback_p, proc_cmd_p, dir_reply_cmd.valid_p, cache_request_cmd.valid_p, cache_reply_cmd.valid_p, dir_request_cmd.valid_p));
+  std::string s = "";
+  for (int i = 0; i < MAX_NUM_PROCS; i++) {
+    s += std::to_string(on_net_p[i]);
+  }
+  NOTE_ARGS(("node = %d: on_net_p: %s", node, s.c_str()));
+  if (proc_cmd_writeback_p) {
+    if (!process_proc_reply(proc_cmd_writeback)) {
       proc_cmd_writeback_p = false;
     }
   } else if (proc_cmd_p) {
@@ -52,6 +64,40 @@ void iu_t::advance_one_cycle() {
       proc_cmd_p = false;
     }
   }
+  if (dir_reply_cmd.valid_p || net->from_net_p(node, PRI0)) {
+    NOTE_ARGS(("PRI0: %d, %d", node, !dir_reply_cmd.valid_p));
+    if (!dir_reply_cmd.valid_p) {
+      dir_reply_cmd = net->from_net(node, PRI0);
+    }
+    if (!process_dir_reply(dir_reply_cmd)) {
+      dir_reply_cmd.valid_p = false;
+    }
+  } else if (cache_request_cmd.valid_p || net->from_net_p(node, PRI1)) {
+    NOTE_ARGS(("PRI1: %d, %d", node, !cache_request_cmd.valid_p));
+    if (!cache_request_cmd.valid_p) {
+      cache_request_cmd = net->from_net(node, PRI1);
+    }
+    if (!process_cache_request(cache_request_cmd)) {
+      cache_request_cmd.valid_p = false;
+    }
+  } else if (cache_reply_cmd.valid_p || net->from_net_p(node, PRI2)) {
+    NOTE_ARGS(("PRI2: %d, %d", node, !cache_reply_cmd.valid_p));
+    if (!cache_reply_cmd.valid_p) {
+      cache_reply_cmd = net->from_net(node, PRI2);
+    }
+    if (!process_cache_reply(cache_reply_cmd)) {
+      cache_reply_cmd.valid_p = false;
+    }
+  } else if (dir_request_cmd.valid_p || net->from_net_p(node, PRI3)) {
+    NOTE_ARGS(("PRI3: %d, %d", node, !dir_request_cmd.valid_p));
+    if (!dir_request_cmd.valid_p) {
+      dir_request_cmd = net->from_net(node, PRI3);
+    }
+    if (!process_dir_request(dir_request_cmd)) {
+      dir_request_cmd.valid_p = false;
+    }
+  }
+  
 }
 
 // processor side
@@ -59,8 +105,13 @@ void iu_t::advance_one_cycle() {
 // this interface method buffers a non-writeback request from the processor, returns true if cannot complete
 bool iu_t::from_proc(proc_cmd_t pc) {
   if (!proc_cmd_p) {
+    NOTE_ARGS(("node = %d: permit_tag %d and busop %d for address %d", node, pc.permit_tag, pc.busop, pc.addr));
     proc_cmd_p = true;
     proc_cmd = pc;
+    bus_tag_data_t *tag = (bus_tag_data_t *)&proc_cmd.tag;
+    tag->valid_p = true;
+    tag->reply_p = false;
+    tag->id = cmd_id++;
 
     return(false);
   } else {
@@ -71,8 +122,13 @@ bool iu_t::from_proc(proc_cmd_t pc) {
 // this interface method buffers a writeback request from the processor, returns true if cannot complete
 bool iu_t::from_proc_writeback(proc_cmd_t pc) {
   if (!proc_cmd_writeback_p) {
+    NOTE_ARGS(("node = %d: permit_tag %d and busop %d for address %d", node, pc.permit_tag, pc.busop, pc.addr));
     proc_cmd_writeback_p = true;
     proc_cmd_writeback = pc;
+    bus_tag_data_t *tag = (bus_tag_data_t *)&proc_cmd_writeback.tag;
+    tag->valid_p = true;
+    tag->reply_p = true;
+    tag->id = cmd_id++;
 
     return(false);
   } else {
@@ -80,102 +136,255 @@ bool iu_t::from_proc_writeback(proc_cmd_t pc) {
   }
 }
 
-bool iu_t::process_proc_request(proc_cmd_t pc) {
+bool iu_t::process_proc_reply(proc_cmd_t &pcw) { 
+  NOTE_ARGS(("node = %d", node));
+  int dest = gen_node(pcw.addr);
+  net_cmd_t reply_cmd = {true, dest, node, pcw};
+  if (dest == node) {
+    return(process_cache_reply(reply_cmd)); 
+  }
+  if (net->to_net(node, PRI2, reply_cmd)) {
+    return(false);
+  }
+  return(true);
+}
+
+bool iu_t::process_proc_request(proc_cmd_t &pc) {
+  NOTE_ARGS(("node = %d, valid = %d", node, ((bus_tag_data_t *)&pc.tag)->valid_p));
+  if (!((bus_tag_data_t *)&pc.tag)->valid_p) {
+    return true;
+  }
   int dest = gen_node(pc.addr);
   int lcl = gen_local_cache_line(pc.addr);
 
-  NOTE_ARGS(("%d: addr = %d, dest = %d", node, pc.addr, dest));
+  NOTE_ARGS(("node = %d: addr = %d, dest = %d", node, pc.addr, dest));
 
+  net_cmd_t net_cmd = {true, dest, node, pc};
   if (dest == node) { // local
-
-    ++local_accesses;
-    proc_cmd_p = false; // clear proc_cmd
-    
-    switch(pc.busop) {
-    case READ:
-      copy_cache_line(pc.data, mem[lcl]);
-
-      cache->reply(pc);
-      return(false);
-      
-    case WRITEBACK:
-      copy_cache_line(mem[lcl], pc.data);
-      return(false);
-      
-    case INVALIDATE:
-      // ***** FYTD *****
-      return(false);  // need to return something for now
-      break;
+    if (!dir_request_cmd.valid_p) {
+      ++local_accesses;
+      dir_request_cmd.valid_p = true;
+      dir_request_cmd.dest = dest;
+      dir_request_cmd.src = node;
+      dir_request_cmd.proc_cmd = proc_cmd;
+      ((bus_tag_data_t *)&pc.tag)->valid_p = false;
     }
-    
   } else { // global
-    ++global_accesses;
-    net_cmd_t net_cmd;
-
-    net_cmd.src = node;
-    net_cmd.dest = dest;
-    net_cmd.proc_cmd = pc;
-
-    return(net->to_net(node, PRI1, net_cmd));
+    if (net->to_net(node, PRI3, net_cmd)) {
+      ++global_accesses;
+      ((bus_tag_data_t *)&proc_cmd.tag)->valid_p = false;
+    }
   }
-  return(false); // need to return something
+  return(true);
 }
 
-
-// receive a net request
-bool iu_t::process_net_request(net_cmd_t net_cmd) {
+// receive a directory request
+bool iu_t::process_dir_request(net_cmd_t net_cmd) {
   proc_cmd_t pc = net_cmd.proc_cmd;
 
   int lcl = gen_local_cache_line(pc.addr);
   int src = net_cmd.src;
-  int dest = net_cmd.dest;
 
-  // ***** FYTD *****
   // sanity check
   if (gen_node(pc.addr) != node) 
     ERROR("sent to wrong home site!");
+  if (pc.busop != READ)
+    ERROR("only READ requests are allowed to the directory");
 
-  switch(pc.busop) {
-  case READ: // assume local
-    net_cmd.dest = src;
-    net_cmd.src = dest;
-    copy_cache_line(pc.data, mem[lcl]);
-    net_cmd.proc_cmd = pc;
-
-
-    return(net->to_net(node, PRI0, net_cmd));
-      
-  case WRITEBACK:
-    copy_cache_line(mem[lcl], pc.data);
-    return(false);
-      
-  case INVALIDATE:
-  default:
-    // ***** FYTD *****
-    return(false);  // need to return something for now
+  net_cmd_t net_cmd_request = {true, -1, node, {INVALIDATE, pc.addr, 0, INVALID, {0}}};
+  bus_tag_data_t *tag = ((bus_tag_data_t *)&net_cmd_request.proc_cmd.tag);
+  tag->valid_p = true;
+  tag->reply_p = false;
+  tag->id = ((bus_tag_data_t *)&pc.tag)->id;
+  net_cmd_t net_cmd_reply = {false, src, node, pc};
+  NOTE_ARGS(("node = %d, addr = %d, lcl = %d, src = %d", node, pc.addr, lcl, src));
+  directory_entry_t &dir_entry = ((directory_entry_t *)dir_mem)[lcl];
+  permit_tag_t permit_tag = get_directory_entry_state(dir_entry);
+  switch(permit_tag) {
+    case INVALID:
+      net_cmd_reply.valid_p = true;
+      break;
+    
+    case SHARED: {
+      if (pc.permit_tag == SHARED || (pc.permit_tag == MODIFIED && get_directory_entry_owner(dir_entry) == src)) { // proc only requests in SHARED or MODIFIED
+        net_cmd_reply.valid_p = true;
+        break;
+      }
+      NOTE_ARGS(("(SHARED) sending invalidate for line %d", lcl));
+      for (int i = 0; i < MAX_NUM_PROCS; i++) {
+        if (on_net_p[i] || i == src || dir_entry.node_mask[i] == 0)
+          continue;
+        if (i == node) {
+          response_t response = cache->snoop(net_cmd_request.proc_cmd);
+          if (!response.retry_p) {
+            on_net_p[i] = true;
+          }
+        } else {
+          net_cmd_request.dest = i;
+          if (net->to_net(node, PRI1, net_cmd_request)) {
+            NOTE_ARGS(("sending invalidate to %d", i));
+            on_net_p[i] = true;
+          }
+        }
+      }
+      break;
+    }
+    case MODIFIED: {
+      int owner = get_directory_entry_owner(dir_entry);
+      if (owner == src) {
+        ERROR("requestor already has the cache in MODIFIED state");
+      }
+      NOTE_ARGS(("(MODIFIED) sending invalidate for line %d", lcl));
+      net_cmd_reply.valid_p = false;
+      net_cmd_request.proc_cmd.busop = WRITEBACK;
+      if (on_net_p[owner])
+        break;
+      if (owner == node) {
+        response_t response = cache->snoop(net_cmd_request.proc_cmd);
+        if (!response.retry_p) {
+          on_net_p[owner] = true;
+        }
+      } else {
+        net_cmd_request.dest = owner;
+        if (net->to_net(node, PRI1, net_cmd_request)) {
+          NOTE_ARGS(("sending invalidate to %d", owner));
+          on_net_p[owner] = true;
+        }
+      }
+      break;
+    }
   }
+
+  if (net_cmd_reply.valid_p) {
+    for (int i = 0; i < MAX_NUM_PROCS; i++) {
+      on_net_p[i] = false;
+    }
+    if (src == node) {
+      update_directory_entry(lcl, dir_entry, pc.busop, src, pc.data, pc.permit_tag);
+      ((bus_tag_data_t *)&proc_cmd.tag)->valid_p = false;
+      return(process_dir_reply(net_cmd_reply));
+    } else if (net->to_net(node, PRI0, net_cmd_reply)) {
+      update_directory_entry(lcl, dir_entry, pc.busop, src, pc.data, pc.permit_tag);
+      return(false);
+    }
+  } 
+  return(true);
 }
 
-bool iu_t::process_net_reply(net_cmd_t net_cmd) {
+bool iu_t::process_dir_reply(net_cmd_t net_cmd) {
+  NOTE_ARGS(("node = %d", node));
   proc_cmd_t pc = net_cmd.proc_cmd;
-
-  // ***** FYTD *****
-
   proc_cmd_p = false; // clear out request that this reply is a reply to
 
   switch(pc.busop) {
-  case READ: // assume local
+  case READ:
     cache->reply(pc);
     return(false);
       
   case WRITEBACK:
   case INVALIDATE:
     ERROR("should not have gotten a reply back from a write or an invalidate, since we are incoherent");
-    return(false);  // need to return something for now
   default:
     ERROR("should not reach default");
-    return(false);  // need to return something
   }
+}
+
+bool iu_t::process_cache_request(net_cmd_t net_cmd) {
+  NOTE_ARGS(("node = %d", node));
+  proc_cmd_t pc = net_cmd.proc_cmd;
+  response_t response = cache->snoop(pc);
+  if (response.retry_p) {
+    return(true);
+  }
+  return(false);
+}
+
+bool iu_t::process_cache_reply(net_cmd_t net_cmd) {
+  NOTE_ARGS(("node = %d", node));
+  proc_cmd_t pc = net_cmd.proc_cmd;
+  bus_tag_data_t *tag = (bus_tag_data_t *)&pc.tag;
+
+  int lcl = gen_local_cache_line(pc.addr);
+  int src = net_cmd.src;
+
+  // sanity check
+  if (gen_node(pc.addr) != node) 
+    ERROR("sent to wrong home site!");
+  if (!tag->reply_p)
+    ERROR("should be a reply message");
+  
+  directory_entry_t &dir_entry = ((directory_entry_t *)dir_mem)[lcl];
+  update_directory_entry(lcl, dir_entry, pc.busop, net_cmd.src, pc.data, pc.permit_tag);
+  return(false);
+}
+
+permit_tag_t iu_t::get_directory_entry_state(const directory_entry_t &dir_entry) {
+  if (dir_entry.modified_p) {
+    int count = 0;
+    for (int i = 0; i < MAX_NUM_PROCS; i++)
+      if (dir_entry.node_mask[i])
+        count++;
+    if (count > 1)
+      ERROR("more than one nodes have data even though it is in MODIFIED state");
+    return(MODIFIED);
+  }
+  for (int i = 0; i < MAX_NUM_PROCS; i++) {
+    if (dir_entry.node_mask[i])
+      return(SHARED);
+  }
+  return(INVALID);
+}
+
+void iu_t::update_directory_entry(int lcl, directory_entry_t &dir_entry, busop_t busop, int node, data_t data, permit_tag_t permit_tag) {
+  switch(busop) {
+    case INVALIDATE:
+      dir_entry.node_mask[node] = 0;
+      break;
+
+    case WRITEBACK: {
+      int count = 0;
+      for (int i = 0; i < MAX_NUM_PROCS; i++)
+        if (dir_entry.node_mask[i])
+          count++;
+      if (count > 1 || count == 0)
+        ERROR("should not have gotten a writeback request for a cache line that is not in MODIFIED state");
+      dir_entry.node_mask[node] = 0;
+      dir_entry.modified_p = false;
+      copy_cache_line(mem[lcl], data);
+      break;
+    }
+    
+    case READ: {
+      int count = 0;
+      for (int i = 0; i < MAX_NUM_PROCS; i++)
+        if (dir_entry.node_mask[i])
+          count++;
+      if (count > 1 && permit_tag == MODIFIED)
+        ERROR("should not MODIFY for a SHARED cache line");
+      dir_entry.node_mask[node] = 1;
+      dir_entry.modified_p = (permit_tag == MODIFIED);
+      break;
+    }
+  }
+  NOTE_ARGS(("updated directory entry at cache line %d, busop %d, permit_tag %d, node %d", lcl, busop, permit_tag, node));
+  std::string s = "";
+  for (int i = 0; i < MAX_NUM_PROCS; i++) {
+    s += std::to_string(dir_entry.node_mask[i]);
+  }
+  NOTE_ARGS(("node_mask: %s", s.c_str()));
+}
+
+int iu_t::get_directory_entry_owner(const directory_entry_t &dir_entry)
+{
+  int count = 0, node = -1;
+  for (int i = 0; i < MAX_NUM_PROCS; i++)
+    if (dir_entry.node_mask[i]) {
+      count++;
+      node = i;
+    }
+  if (count > 1 || count == 0)
+    return -1;
+  return node;  
 }
 
 void iu_t::print_stats() {

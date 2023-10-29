@@ -13,10 +13,40 @@
 #include "iu.h"
 #include "helpers.h"
 
-// ***** FYTD ***** 
-response_t cache_t::snoop(proc_cmd_t proc_cmd) {
-  response_t r;
-  return(r);
+response_t cache_t::snoop(proc_cmd_t wb) {
+  response_t response;
+
+  cache_access_response_t car;
+  if (!cache_access(wb.addr, INVALID, &car)) {
+    response.hit_p = false;
+  } else {
+    response.hit_p = true;
+  }
+
+  switch (wb.busop) {
+    case WRITEBACK: {
+      if (!response.hit_p) { // only conclusion is that the cache line has been evicted and writeback is still pending (which is why directory doesn't have up to date information)
+        return(response);
+      }
+    }
+    copy_cache_line(wb.data, tags[car.set][car.way].data);
+    case READ:
+    case INVALIDATE: {
+      if (response.hit_p) {
+        modify_permit_tag(car, wb.permit_tag);
+      }
+      response.hit_p = true;
+      if (iu->from_proc_writeback(wb)) {
+        response.retry_p = true;
+        return(response);
+      }
+      NOTE_ARGS(("%d: writeback for addr_tag %d with new permit_tag %d", node, car.address_tag, wb.permit_tag));
+      return(response);
+    }
+
+    default:
+      ERROR("invalid busop");
+  }
 }
 
 
@@ -29,8 +59,7 @@ void cache_t::reply(proc_cmd_t proc_cmd) {
   if (tags[car.set][car.way].permit_tag == MODIFIED) { // need to writeback since replacing modified line
     proc_cmd_t wb;
     wb.busop = WRITEBACK;
-    // ***** FYTD: calculate the correct writeback address ***** 
-    wb.addr = 0; // need a value for now
+    wb.addr = (tags[car.set][car.way].address_tag << address_tag_shift) | (car.set << set_shift);
     copy_cache_line(wb.data, tags[car.set][car.way].data);
     if (iu->from_proc_writeback(wb)) {
       ERROR("should not retry a from_proc_writeback since there should only be one outstanding request");

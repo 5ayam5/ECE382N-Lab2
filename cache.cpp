@@ -85,7 +85,7 @@ int cache_t::gen_offset(address_t addr) {
 
 int cache_t::gen_set(address_t addr) {
   int set = (addr >> set_shift) & set_mask;
-  NOTE_ARGS(("addr = %x, set_shift %d, set_mask %x, set %d\n", addr, set_shift, set_mask, set));
+  NOTE_ARGS(("addr = %x, set_shift %d, set_mask %x, set %d", addr, set_shift, set_mask, set));
   return(set);
 }
 

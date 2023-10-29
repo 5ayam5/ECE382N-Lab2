@@ -13,7 +13,22 @@
 #include "cache.h"
 #include "network.h"
 
+const int MAX_NUM_PROCS = 32;
+
 class iu_t {
+  typedef struct {
+    bool modified_p;
+    bool node_mask[MAX_NUM_PROCS];
+  } directory_entry_t;
+
+  typedef struct {
+    bool valid_p;
+    bool reply_p;
+    uint8_t id;
+  } bus_tag_data_t;
+
+  uint8_t cmd_id;
+
   int node;
 
   int local_accesses;
@@ -25,6 +40,12 @@ class iu_t {
   cache_t *cache;
   network_t *net;
 
+  net_cmd_t dir_reply_cmd;
+  net_cmd_t cache_request_cmd;
+  net_cmd_t cache_reply_cmd;
+  net_cmd_t dir_request_cmd;
+  bool on_net_p[MAX_NUM_PROCS];
+
   bool proc_cmd_p;
   proc_cmd_t proc_cmd;
 
@@ -32,11 +53,19 @@ class iu_t {
   proc_cmd_t proc_cmd_writeback;
 
   // processor side
-  bool process_proc_request(proc_cmd_t proc_cmd);
+  bool process_proc_reply(proc_cmd_t &proc_cmd_writeback);
+  bool process_proc_request(proc_cmd_t &proc_cmd);
 
   // network side
-  bool process_net_request(net_cmd_t net_cmd);
-  bool process_net_reply(net_cmd_t net_cmd);
+  bool process_dir_reply(net_cmd_t net_cmd);
+  bool process_cache_reply(net_cmd_t net_cmd);
+  bool process_cache_request(net_cmd_t net_cmd);
+  bool process_dir_request(net_cmd_t net_cmd);
+
+  // Directory side
+  permit_tag_t get_directory_entry_state(const directory_entry_t &dir_entry);
+  void update_directory_entry(int lcl, directory_entry_t &dir_entry, busop_t busop, int node, data_t data, permit_tag_t permit_tag);
+  int get_directory_entry_owner(const directory_entry_t &dir_entry); // return the node having the MODIFIED data or the sole node having the SHARED or EXCLUSIVE data
 
  public:
   iu_t(int __node);

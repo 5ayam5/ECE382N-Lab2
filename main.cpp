@@ -40,8 +40,10 @@ void advance_time() {
 
     ius[p]->advance_one_cycle();
     procs[p]->advance_one_cycle();
+    NOTE("\n");
 
   }
+  NOTE("\n");
   ++cur_cycle;
 }
 

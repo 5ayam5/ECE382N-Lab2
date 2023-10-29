@@ -39,7 +39,7 @@ network_t::network_t(int p) {
 
 bool network_t::to_net(int src_port, pri_t pri, net_cmd_t cmd) {
 
-  NOTE_ARGS(("sending from %d to %d", src_port, cmd.dest));
+  NOTE_ARGS(("(%d) sending from %d to %d",pri, src_port, cmd.dest));
 
   // src_port is not needed in this implementation, but may eventually
   // be needed, so we have it here.
