@@ -26,6 +26,7 @@ response_t cache_t::snoop(proc_cmd_t wb) {
   switch (wb.busop) {
     case WRITEBACK: {
       if (!response.hit_p) { // only conclusion is that the cache line has been evicted and writeback is still pending (which is why directory doesn't have up to date information)
+        response.retry_p = false;
         return(response);
       }
     }
@@ -39,6 +40,8 @@ response_t cache_t::snoop(proc_cmd_t wb) {
       if (iu->from_proc_writeback(wb)) {
         response.retry_p = true;
         return(response);
+      } else {
+        response.retry_p = false;
       }
       NOTE_ARGS(("%d: writeback for addr_tag %d with new permit_tag %d", node, car.address_tag, wb.permit_tag));
       return(response);

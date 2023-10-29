@@ -259,6 +259,7 @@ bool iu_t::process_dir_request(net_cmd_t net_cmd) {
     for (int i = 0; i < MAX_NUM_PROCS; i++) {
       on_net_p[i] = false;
     }
+    copy_cache_line(net_cmd_reply.proc_cmd.data, mem[lcl]);
     if (src == node) {
       update_directory_entry(lcl, dir_entry, pc.busop, src, pc.data, pc.permit_tag);
       ((bus_tag_data_t *)&proc_cmd.tag)->valid_p = false;

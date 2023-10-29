@@ -266,6 +266,7 @@ response_t cache_t::store(address_t addr, bus_tag_t tag, int data, bool retried_
       }
 
       ++misses;
+      NOTE_ARGS(("%d: miss: addr %d, tag %d", node, addr, tag));
     }
 
     r.hit_p = false;
@@ -281,6 +282,7 @@ response_t cache_t::store(address_t addr, bus_tag_t tag, int data, bool retried_
       }
 
       ++partial_hits;
+      NOTE_ARGS(("%d: partial_hit: addr %d, tag %d", node, addr, tag));
     }
 
     r.hit_p = false;
@@ -306,6 +308,7 @@ response_t cache_t::store(address_t addr, bus_tag_t tag, int data, bool retried_
     r.retry_p = false;
     update_replacement(car);
     write_data(addr, car, data);
+    NOTE_ARGS(("%d: hit: addr %d, tag %d", node, addr, tag));
     break;
   default:
     ERROR("store: illegal permission");

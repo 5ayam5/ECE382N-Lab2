@@ -78,9 +78,5 @@ class iu_t {
   // processor side
   bool from_proc(proc_cmd_t pc);
   bool from_proc_writeback(proc_cmd_t pc);
-  
-  // network side
-  bool from_net(net_cmd_t nc);
-  
 };
 #endif
