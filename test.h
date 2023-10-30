@@ -12,6 +12,20 @@ const int MAX_NUM_PROCS_TEST = 32;
 typedef enum {LD, ST, ADD, BR, INIT} instruction_type_t;
 const int LIVELOCK_LIMIT = 10000;
 
+struct test_case_t{
+    int type;
+    int address;
+    int bus_tag;
+    int data;
+
+    test_case_t(int t, int a, int b, int d) : type(t), address(a), bus_tag(b), data(d) {}
+    test_case_t(int t, int a, int b) : type(t), address(a), bus_tag(b) {}
+    test_case_t(int t, int a) : type(t), address(a) {}
+    test_case_t() {}
+
+};
+
+
 class instruction_t {
 public:
   instruction_type_t type;
@@ -49,6 +63,11 @@ class proc_t {
   std::vector<instruction_t> instructions;
   int wait_cycles;
   int pc;
+  bool tests_empty;
+  std::queue<test_case_t> testQueue;
+
+  int test_idx = 0;
+
 
  public:
   proc_t(int p);

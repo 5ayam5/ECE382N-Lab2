@@ -11,6 +11,15 @@
 #include "cache.h"
 #include "test.h"
 
+int addr_store;
+int count_0=0;
+int count_1 = 0;
+int finish_7 = 0;
+int finish_0 = 0;
+int finish_3 = 0;
+int ld_value[32];
+
+
 proc_t::proc_t(int __p) {
   proc = __p;
   init();
@@ -22,17 +31,20 @@ std::vector<event_t> proc_t::events;
 void proc_t::init() {
   response.retry_p = false;
   ld_p = false;
+  tests_empty = false;
   pc = 0;
   wait_cycles = 0;
 
   switch(args.test) {
-    case 1: 
-    case 2: {
+    case 1: //all loads -> all stores -> all loads
+    break;
+
+    case 2: { //Dekker's algorithm
       switch(proc) {
         case 0:
-        case 1: { // Dekker's algorithm
+        case 1: {
           int critical = 14;
-          int stride = (args.test == 1) ? 1 : (500 * args.num_procs);
+          int stride = 500 * args.num_procs;
 
           // pre-critical section
           instructions.emplace_back(INIT, 2, 1);                 //  0: R2 = 1
@@ -71,7 +83,7 @@ void proc_t::init() {
     }
     break;
 
-    case 3: {
+    case 3: { //loads and stores simultaneously
       if (proc == 0) {
         instructions.emplace_back(INIT, 0, 10);                 // 0: R0 = 10
         instructions.emplace_back(ST, 0, 100 * args.num_procs); // 1: mem[100] = 10
@@ -87,13 +99,34 @@ void proc_t::init() {
     }
     break;
 
-    case 4: {
+    case 4: { //random test
       int addr_range = 1024 * 8 * args.num_procs;
       for (int i = 0; i < 10000; ++i) {
         instruction_type_t type = (random() % 2 == 0) ? LD : ST;
         int op1 = random() % NUM_REGISTERS;
         int op2 = random() % addr_range;
         instructions.emplace_back(type, op1, op2);
+      }
+    }
+    break;
+
+    case 5: { //LRU eviction
+      switch(proc) {
+        case 7: {
+          testQueue.push(test_case_t(1, 5, 0));
+          testQueue.push(test_case_t(1, 65, 1));
+          testQueue.push(test_case_t(1, 130, 2));
+          testQueue.push(test_case_t(1, 195, 3));
+          break;
+        }
+
+        case 5: {
+          testQueue.push(test_case_t(1, 5, 0));
+          testQueue.push(test_case_t(1, 65, 1));
+          testQueue.push(test_case_t(1, 130, 2));
+          testQueue.push(test_case_t(1, 195, 3));
+          break;
+        }
       }
     }
     break;
@@ -119,9 +152,15 @@ void init_test() {
     break;
 
   case 1:
+    addr_store = (random() % args.num_procs) * 256 + random() % 256;
+    break;
   case 2:
+    break;
   case 3:
+    break;
   case 4:
+    break;
+  case 5:
     break;
 
   default:
@@ -142,7 +181,26 @@ void finish_test() {
     }
     break;
 
-  case 1:
+  case 1: {
+    int counts[args.num_procs + 1];
+    for (int i = 0; i <= args.num_procs; ++i) {
+      counts[i] = 0;
+    }
+    for(int i = 0; i <= args.num_procs; ++i) {
+      counts[ld_value[i]]++;
+    }
+    bool passed = false;
+    for (int i = 0; i <= args.num_procs; ++i) {
+      NOTE_ARGS(("count for %d is %d", i, counts[i]));
+      if (counts[i] == args.num_procs) {
+        passed = true;
+      }
+    }
+    if (!passed) {
+      ERROR("test failed");
+    }
+  }
+  break;
   case 2: {
     int num_procs = std::min(args.num_procs, 2);
     bool counts[num_procs];
@@ -181,6 +239,14 @@ void finish_test() {
     }
   }
   break;
+
+  case 5: {
+    if(ld_value[3] == 10)
+        printf("test passed\n");
+      else
+        ERROR("test failed");
+  }
+  break;
     
   default: 
     ERROR("don't recognize this test");
@@ -201,10 +267,60 @@ void proc_t::advance_one_cycle() {
     else      response = cache->store(addr, 0, cur_cycle, response.retry_p);
     break;
 
-  case 1:
-  case 2:
-  case 3:
-  case 4: {
+  case 1: { //all loads -> all stores -> all loads
+    test_case_t curr_test;
+    if (!response.retry_p) {
+      wait_cycles=0;
+      if(test_idx == 0) {
+        curr_test = test_case_t(1, addr_store, 0);
+        test_idx = test_idx + 1;
+        tests_empty = false;
+      }
+      else if (test_idx == 1 && count_0 == args.num_procs) {
+        curr_test = test_case_t(0, addr_store, 0, proc+1);
+        test_idx = test_idx + 1;
+
+        tests_empty = false;
+      }
+      else if (test_idx == 2 && count_1 == args.num_procs) {
+        curr_test = test_case_t(1, addr_store, 0);
+        test_idx = test_idx + 1;
+        tests_empty = false;
+      }
+      else {
+        tests_empty = true;
+      }
+      addr = curr_test.address;
+      ld_p = curr_test.type;
+      tag = curr_test.bus_tag;
+    }
+    // Tests are not empty the we run, if they are empty we will not schedule a request.
+    if ((!tests_empty) | (response.retry_p)) {
+      if (ld_p) {
+        response = cache->load(addr, tag, &data, response.retry_p);
+      }
+      else {
+        response = cache->store(addr, tag, proc+1, response.retry_p);
+      }
+      wait_cycles++;
+      if(wait_cycles > LIVELOCK_LIMIT)
+              ERROR("Livelock error\n");
+      if(!response.retry_p) {
+        if(test_idx == 1)
+          count_0++;
+        if(test_idx == 2)
+          count_1++;
+        if(test_idx == 3)
+          ld_value[proc] = data;
+
+      }
+    }
+
+  }
+  break;
+  case 2: //Dekkers
+  case 3: //simultaneous loads and stores
+  case 4: { //random SC test
     if (pc == instructions.size()) {
       break;
     }
@@ -270,6 +386,89 @@ void proc_t::advance_one_cycle() {
           break;
         }
       }
+    }
+  }
+  break;
+
+  case 5: { //LRU eviction
+    if(count_0 == 8 && !finish_7) {
+      if(proc == 7) {
+        response = cache->load(260, 0, &data, response.retry_p);
+        wait_cycles++;
+        if(wait_cycles > LIVELOCK_LIMIT)
+                ERROR("livelock error\n");
+        if(!response.retry_p) {
+          finish_7 = 1;
+          wait_cycles = 0;
+          return;
+        }
+      }
+    }
+
+    if(finish_7 && !finish_0) {
+      if(proc == 0) {
+        response = cache->store(5, 0, 10, response.retry_p);
+        wait_cycles++;
+        if(wait_cycles > LIVELOCK_LIMIT)
+                ERROR("livelock error\n");
+        if(!response.retry_p) {
+          finish_0 = 1;
+          wait_cycles = 0;
+         }
+           return;
+      }
+
+    }
+
+    if(finish_0 && !finish_3) {
+      if(proc == 3) {
+        response = cache->load(5,0, &data, response.retry_p);
+        wait_cycles++;
+        if(wait_cycles > LIVELOCK_LIMIT)
+                ERROR("livelock error\n");
+        if(!response.retry_p) {
+          finish_3 = 1;
+          ld_value[proc] = data;
+          wait_cycles = 0;
+        }
+        return;
+      }
+    }
+
+    if (!response.retry_p) {
+        // No current retrying request. Get new request from test queue
+        if (!testQueue.empty()) {
+          // Test queue is not empty
+          test_case_t curr_test = testQueue.front();
+          testQueue.pop();
+          addr = curr_test.address;
+          ld_p = curr_test.type;
+          tag = curr_test.bus_tag;
+          tests_empty = false;
+          wait_cycles = 0;
+        }
+        else {
+          // test queue is empty
+          tests_empty = true;
+        }
+    }
+      // Tests are not empty the we run, if they are empty we will not schedule a request.
+    if (((!tests_empty) | (response.retry_p)) & (count_0 != 8)) {
+        if (ld_p) {
+          response = cache->load(addr, tag, &data, response.retry_p);
+        }
+        else {
+          response = cache->store(addr, tag, cur_cycle, response.retry_p);
+        }
+        wait_cycles++;
+        if(wait_cycles > LIVELOCK_LIMIT)
+                ERROR("livelock error\n");
+
+        if(!response.retry_p) {
+          count_0++;
+          wait_cycles = 0;
+        }
+
     }
   }
   break;

@@ -161,10 +161,7 @@ bool iu_t::process_proc_request(proc_cmd_t &pc) {
   if (dest == node) { // local
     if (!dir_request_cmd.valid_p) {
       ++local_accesses;
-      dir_request_cmd.valid_p = true;
-      dir_request_cmd.dest = dest;
-      dir_request_cmd.src = node;
-      dir_request_cmd.proc_cmd = proc_cmd;
+      dir_request_cmd = net_cmd;
       ((bus_tag_data_t *)&pc.tag)->valid_p = false;
     }
   } else { // global
