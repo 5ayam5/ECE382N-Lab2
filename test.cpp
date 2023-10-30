@@ -84,17 +84,25 @@ void proc_t::init() {
     break;
 
     case 3: { //loads and stores simultaneously
+      int num_addrs = 1000;
+      int addr_range = 1024 * 8 * args.num_procs;
+      std::vector<int> addrs;
+      for (int i = 0; i < num_addrs; i++) {
+        addrs.push_back(random() % addr_range);
+      }
       if (proc == 0) {
-        instructions.emplace_back(INIT, 0, 10);                 // 0: R0 = 10
-        instructions.emplace_back(ST, 0, 100 * args.num_procs); // 1: mem[100] = 10
-        instructions.emplace_back(INIT, 0, 20);                 // 2: R0 = 20
-        instructions.emplace_back(ST, 0, 500 * args.num_procs); // 3: mem[200] = 20
-      } else if (proc == args.num_procs - 1) {
-        for (int i = 0; i < 25; ++i) {
-          instructions.emplace_back(INIT, 0, 0);                // i: R0 = 0
+        for (int i = 0; i < num_addrs; i++) {
+          instructions.emplace_back(INIT, 0, i);                 // 0: R0 = i
+          instructions.emplace_back(ST, 0, addrs[i]);            // 1: mem[addrs[i]] = i
         }
-        instructions.emplace_back(LD, 0, 500 * args.num_procs); // 25: R0 = mem[500]
-        instructions.emplace_back(LD, 1, 100 * args.num_procs); // 26: R1 = mem[100]
+      } else if (proc == args.num_procs - 1) {
+        std::reverse(addrs.begin(), addrs.end());
+        for (int i = 0; i < LIVELOCK_LIMIT; i++) {
+          instructions.emplace_back(INIT, 0, 0);
+        }
+        for (int i = 0; i < num_addrs; i++) {
+          instructions.emplace_back(LD, 0, addrs[i]);            // 0: R0 = mem[addrs[i]]
+        }
       }
     }
     break;
@@ -113,7 +121,7 @@ void proc_t::init() {
     case 5: { //LRU eviction
       switch(proc) {
         case 7: {
-          testQueue.push(test_case_t(1, 5, 0));
+          testQueue.push(test_case_t(0, 5, 0, 2));
           testQueue.push(test_case_t(1, 65, 1));
           testQueue.push(test_case_t(1, 130, 2));
           testQueue.push(test_case_t(1, 195, 3));
