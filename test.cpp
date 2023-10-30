@@ -88,7 +88,13 @@ void proc_t::init() {
     break;
 
     case 4: {
-
+      int addr_range = 1024 * 8 * args.num_procs;
+      for (int i = 0; i < 10000; ++i) {
+        instruction_type_t type = (random() % 2 == 0) ? LD : ST;
+        int op1 = random() % NUM_REGISTERS;
+        int op2 = random() % addr_range;
+        instructions.emplace_back(type, op1, op2);
+      }
     }
     break;
   }
@@ -99,18 +105,11 @@ void proc_t::bind(cache_t *c) {
 }
 
 
-// this is just a simple random test.  I'm not giving
-// you any more test cases than this.  You will be tested on the
-// correctness and performance of your solution.
-
 extern args_t args;
 extern int addr_range;
 extern cache_t **caches;
 
 test_args_t test_args;
-
-void check_sc(const proc_t &proc, int pc, int test) {
-}
 
 void init_test() {
   proc_t::events.clear();
@@ -204,7 +203,8 @@ void proc_t::advance_one_cycle() {
 
   case 1:
   case 2:
-  case 3: {
+  case 3:
+  case 4: {
     if (pc == instructions.size()) {
       break;
     }

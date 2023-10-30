@@ -16,10 +16,7 @@
 const int MAX_NUM_PROCS = 32;
 
 class iu_t {
-  typedef struct {
-    bool modified_p;
-    bool node_mask[MAX_NUM_PROCS];
-  } directory_entry_t;
+  static const int DIRECTORY_SIZE = 5;
 
   typedef struct {
     bool valid_p;
@@ -63,9 +60,13 @@ class iu_t {
   bool process_dir_request(net_cmd_t net_cmd);
 
   // Directory side
-  permit_tag_t get_directory_entry_state(const directory_entry_t &dir_entry);
-  void update_directory_entry(int lcl, directory_entry_t &dir_entry, busop_t busop, int node, data_t data, permit_tag_t permit_tag);
-  int get_directory_entry_owner(const directory_entry_t &dir_entry); // return the node having the MODIFIED data or the sole node having the SHARED or EXCLUSIVE data
+  bool get_directory_entry_modified(int lcl);
+  void set_directory_entry_modified(int lcl, bool modified);
+  bool get_directory_entry_node_mask(int lcl, int node);
+  void set_directory_entry_node_mask(int lcl, int node, bool present);
+  permit_tag_t get_directory_entry_state(int lcl);
+  void update_directory_entry(int lcl, busop_t busop, int node, data_t data, permit_tag_t permit_tag);
+  int get_directory_entry_owner(int lcl); // return the node having the MODIFIED data or the sole node having the SHARED or EXCLUSIVE data
 
  public:
   iu_t(int __node);

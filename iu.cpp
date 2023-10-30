@@ -19,12 +19,10 @@ iu_t::iu_t(int __node) {
   for (int i = 0; i < MEM_SIZE; ++i) 
     for (int j = 0; j < CACHE_LINE_SIZE; ++j)
       mem[i][j] = 0;
-  for (int i = 0; i < MEM_SIZE / CACHE_LINE_SIZE; ++i) {
-    directory_entry_t &entry = ((directory_entry_t *)dir_mem)[i];
-    entry.modified_p = false;
+  for (int i = 0; i < MEM_SIZE; ++i) {
+    set_directory_entry_modified(i, false);
     for (int j = 0; j < MAX_NUM_PROCS; j++)
-      entry.node_mask[j] = 0;
-    std::flush(std::cout);
+      set_directory_entry_node_mask(i, j, false);
   }
 
   cmd_id = 0;
@@ -198,21 +196,20 @@ bool iu_t::process_dir_request(net_cmd_t net_cmd) {
   tag->id = ((bus_tag_data_t *)&pc.tag)->id;
   net_cmd_t net_cmd_reply = {false, src, node, pc};
   NOTE_ARGS(("node = %d, addr = %d, lcl = %d, src = %d", node, pc.addr, lcl, src));
-  directory_entry_t &dir_entry = ((directory_entry_t *)dir_mem)[lcl];
-  permit_tag_t permit_tag = get_directory_entry_state(dir_entry);
+  permit_tag_t permit_tag = get_directory_entry_state(lcl);
   switch(permit_tag) {
     case INVALID:
       net_cmd_reply.valid_p = true;
       break;
     
     case SHARED: {
-      if (pc.permit_tag == SHARED || (pc.permit_tag == MODIFIED && get_directory_entry_owner(dir_entry) == src)) { // proc only requests in SHARED or MODIFIED
+      if (pc.permit_tag == SHARED || (pc.permit_tag == MODIFIED && get_directory_entry_owner(lcl) == src)) { // proc only requests in SHARED or MODIFIED
         net_cmd_reply.valid_p = true;
         break;
       }
       NOTE_ARGS(("(SHARED) sending invalidate for line %d", lcl));
       for (int i = 0; i < MAX_NUM_PROCS; i++) {
-        if (on_net_p[i] || i == src || dir_entry.node_mask[i] == 0)
+        if (on_net_p[i] || i == src || get_directory_entry_node_mask(lcl, i) == 0)
           continue;
         if (i == node) {
           response_t response = cache->snoop(net_cmd_request.proc_cmd);
@@ -230,7 +227,7 @@ bool iu_t::process_dir_request(net_cmd_t net_cmd) {
       break;
     }
     case MODIFIED: {
-      int owner = get_directory_entry_owner(dir_entry);
+      int owner = get_directory_entry_owner(lcl);
       if (owner == src) {
         ERROR("requestor already has the cache in MODIFIED state");
       }
@@ -261,15 +258,39 @@ bool iu_t::process_dir_request(net_cmd_t net_cmd) {
     }
     copy_cache_line(net_cmd_reply.proc_cmd.data, mem[lcl]);
     if (src == node) {
-      update_directory_entry(lcl, dir_entry, pc.busop, src, pc.data, pc.permit_tag);
+      update_directory_entry(lcl, pc.busop, src, pc.data, pc.permit_tag);
       ((bus_tag_data_t *)&proc_cmd.tag)->valid_p = false;
       return(process_dir_reply(net_cmd_reply));
     } else if (net->to_net(node, PRI0, net_cmd_reply)) {
-      update_directory_entry(lcl, dir_entry, pc.busop, src, pc.data, pc.permit_tag);
+      update_directory_entry(lcl, pc.busop, src, pc.data, pc.permit_tag);
       return(false);
     }
   } 
   return(true);
+}
+
+bool iu_t::get_directory_entry_modified(int lcl) {
+  uint8_t *entry = &((uint8_t *)dir_mem)[lcl * DIRECTORY_SIZE];
+  return(entry[0] & 0x1);
+}
+
+void iu_t::set_directory_entry_modified(int lcl, bool modified) {
+  uint8_t *entry = &((uint8_t *)dir_mem)[lcl * DIRECTORY_SIZE];
+  entry[0] = modified ? 0x1 : 0x0;
+}
+
+bool iu_t::get_directory_entry_node_mask(int lcl, int node) {
+  uint32_t *node_mask = (uint32_t *)&((uint8_t *)dir_mem)[lcl * DIRECTORY_SIZE + 1];
+  return((*node_mask >> node) & 0x1);
+}
+
+void iu_t::set_directory_entry_node_mask(int lcl, int node, bool present) {
+  uint32_t *node_mask = (uint32_t *)&((uint8_t *)dir_mem)[lcl * DIRECTORY_SIZE + 1];
+  if (present) {
+    *node_mask |= (1 << node);
+  } else {
+    *node_mask &= ~(1 << node);
+  }
 }
 
 bool iu_t::process_dir_reply(net_cmd_t net_cmd) {
@@ -279,6 +300,9 @@ bool iu_t::process_dir_reply(net_cmd_t net_cmd) {
 
   switch(pc.busop) {
   case READ:
+    if (proc_cmd_writeback_p) {
+      return(true);
+    }
     cache->reply(pc);
     return(false);
       
@@ -301,12 +325,13 @@ bool iu_t::process_cache_request(net_cmd_t net_cmd) {
 }
 
 bool iu_t::process_cache_reply(net_cmd_t net_cmd) {
-  NOTE_ARGS(("node = %d", node));
   proc_cmd_t pc = net_cmd.proc_cmd;
   bus_tag_data_t *tag = (bus_tag_data_t *)&pc.tag;
 
   int lcl = gen_local_cache_line(pc.addr);
   int src = net_cmd.src;
+
+  NOTE_ARGS(("node = %d: src = %d, lcl = %d, busop = %d, permit_tag = %d", node, src, lcl, pc.busop, pc.permit_tag));
 
   // sanity check
   if (gen_node(pc.addr) != node) 
@@ -314,43 +339,43 @@ bool iu_t::process_cache_reply(net_cmd_t net_cmd) {
   if (!tag->reply_p)
     ERROR("should be a reply message");
   
-  directory_entry_t &dir_entry = ((directory_entry_t *)dir_mem)[lcl];
-  update_directory_entry(lcl, dir_entry, pc.busop, net_cmd.src, pc.data, pc.permit_tag);
+  update_directory_entry(lcl, pc.busop, net_cmd.src, pc.data, pc.permit_tag);
   return(false);
 }
 
-permit_tag_t iu_t::get_directory_entry_state(const directory_entry_t &dir_entry) {
-  if (dir_entry.modified_p) {
+permit_tag_t iu_t::get_directory_entry_state(int lcl)
+{
+  if (get_directory_entry_modified(lcl)) {
     int count = 0;
     for (int i = 0; i < MAX_NUM_PROCS; i++)
-      if (dir_entry.node_mask[i])
+      if (get_directory_entry_node_mask(lcl, i))
         count++;
     if (count > 1)
       ERROR("more than one nodes have data even though it is in MODIFIED state");
     return(MODIFIED);
   }
   for (int i = 0; i < MAX_NUM_PROCS; i++) {
-    if (dir_entry.node_mask[i])
+    if (get_directory_entry_node_mask(lcl, i))
       return(SHARED);
   }
   return(INVALID);
 }
 
-void iu_t::update_directory_entry(int lcl, directory_entry_t &dir_entry, busop_t busop, int node, data_t data, permit_tag_t permit_tag) {
+void iu_t::update_directory_entry(int lcl, busop_t busop, int node, data_t data, permit_tag_t permit_tag) {
   switch(busop) {
     case INVALIDATE:
-      dir_entry.node_mask[node] = 0;
+      set_directory_entry_node_mask(lcl, node, false);
       break;
 
     case WRITEBACK: {
       int count = 0;
       for (int i = 0; i < MAX_NUM_PROCS; i++)
-        if (dir_entry.node_mask[i])
+        if (get_directory_entry_node_mask(lcl, i))
           count++;
       if (count > 1 || count == 0)
         ERROR("should not have gotten a writeback request for a cache line that is not in MODIFIED state");
-      dir_entry.node_mask[node] = 0;
-      dir_entry.modified_p = false;
+      set_directory_entry_node_mask(lcl, node, false);
+      set_directory_entry_modified(lcl, false);
       copy_cache_line(mem[lcl], data);
       break;
     }
@@ -358,28 +383,28 @@ void iu_t::update_directory_entry(int lcl, directory_entry_t &dir_entry, busop_t
     case READ: {
       int count = 0;
       for (int i = 0; i < MAX_NUM_PROCS; i++)
-        if (dir_entry.node_mask[i])
+        if (get_directory_entry_node_mask(lcl, i))
           count++;
       if (count > 1 && permit_tag == MODIFIED)
         ERROR("should not MODIFY for a SHARED cache line");
-      dir_entry.node_mask[node] = 1;
-      dir_entry.modified_p = (permit_tag == MODIFIED);
+      set_directory_entry_node_mask(lcl, node, true);
+      set_directory_entry_modified(lcl, (permit_tag == MODIFIED));
       break;
     }
   }
   NOTE_ARGS(("updated directory entry at cache line %d, busop %d, permit_tag %d, node %d", lcl, busop, permit_tag, node));
   std::string s = "";
   for (int i = 0; i < MAX_NUM_PROCS; i++) {
-    s += std::to_string(dir_entry.node_mask[i]);
+    s += std::to_string(get_directory_entry_node_mask(lcl, i));
   }
   NOTE_ARGS(("node_mask: %s", s.c_str()));
 }
 
-int iu_t::get_directory_entry_owner(const directory_entry_t &dir_entry)
+int iu_t::get_directory_entry_owner(int lcl)
 {
   int count = 0, node = -1;
   for (int i = 0; i < MAX_NUM_PROCS; i++)
-    if (dir_entry.node_mask[i]) {
+    if (get_directory_entry_node_mask(lcl, i)) {
       count++;
       node = i;
     }
